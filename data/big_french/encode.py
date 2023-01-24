@@ -17,8 +17,17 @@ import os
 def main(input_file, encoder):
     enc = tiktoken.get_encoding(encoder)
 
-    with open(input_file, 'r', encoding="utf-8") as f:
-        data=f.read()
+    data = []
+    try:
+        with open(input_file, 'r', encoding="utf-8") as f:
+            while True:
+                a = f.read(1000)
+                if len(a)==0: break
+                data.append(a)
+    except Exception as e:
+        print(e)
+    data = "".join(data)
+    print(f"data has {len(data):,} chars")
 
     toks = np.array(enc.encode_ordinary(data), dtype=np.uint16)
     print(f"data has {len(toks):,} tokens")
