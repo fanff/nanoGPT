@@ -34,7 +34,7 @@ def main(input_file, encoder):
             stack.append(toks)
             stack_size+=len(toks)
 
-            if stack_size>=200*1000*1000:
+            if stack_size>=1*1000*1000:
                 write_stack(stack,stack_size,outidx)
                 stack = []
                 outidx+=1

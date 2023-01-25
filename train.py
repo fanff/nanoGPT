@@ -17,6 +17,7 @@ $ torchrun --nproc_per_node=8 --nnodes=2 --node_rank=1 --master_addr=123.456.123
 """
 
 import os
+import random
 import time
 import math
 import pickle
@@ -44,7 +45,10 @@ wandb_log = False # disabled by default
 wandb_project = 'owt'
 wandb_run_name = 'gpt2' # 'run' + str(time.time())
 # data
-dataset = 'openwebtext'
+dataset = 'openwebtext' # is directory to find file into.
+train_buffer_iter = 10000
+val_buffer_iter = 1000
+
 gradient_accumulation_steps = 1 # used to simulate larger batch sizes
 batch_size = 12 # if gradient_accumulation_steps > 1, this is the micro-batch size
 block_size = 1024
@@ -96,28 +100,55 @@ torch.manual_seed(1337 + seed_offset)
 torch.backends.cuda.matmul.allow_tf32 = True # allow tf32 on matmul
 torch.backends.cudnn.allow_tf32 = True # allow tf32 on cudnn
 device_type = 'cuda' if 'cuda' in device else 'cpu' # for later use in torch.autocast
+
 # note: float16 would require us to change the code to use a GradScaler
 ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16}[dtype]
 ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
 
-# poor man's data loader, TODO evaluate need for actual DataLoader
-data_dir = os.path.join('data', dataset)
-train_data = np.memmap(os.path.join(data_dir, 'train.bin'), dtype=np.uint16, mode='r')
-val_data = np.memmap(os.path.join(data_dir, 'val.bin'), dtype=np.uint16, mode='r')
-def get_batch(split):
-    data = train_data if split == 'train' else val_data
+
+# list all files
+all_files = [os.path.join(dataset,_) for _ in os.listdir(dataset)]
+
+def open_data_file(dataset):
+
+    alldata = np.memmap(dataset, dtype=np.uint16, mode='r')
+    n =len(alldata)
+    train_data = alldata[:int(n*0.9)]
+    val_data = alldata[int(n*0.9):]
+    return train_data,val_data
+
+def x_y_from_data(data):
     ix = torch.randint(len(data) - block_size, (batch_size,))
     x = torch.stack([torch.from_numpy((data[i:i+block_size]).astype(np.int64)) for i in ix])
     y = torch.stack([torch.from_numpy((data[i+1:i+1+block_size]).astype(np.int64)) for i in ix])
     x, y = x.to(device), y.to(device)
     return x, y
 
+def get_batch_gen(split):
+    while True:
+        # pick random file
+        dataset = all_files[random.randint(0, len(all_files) - 1)]
+        print(f"loading {split} {dataset}")
+        train_data, val_data = open_data_file(dataset)
+        data_gen = train_data if split == 'train' else val_data
+        iter_count = train_buffer_iter if split == 'train' else val_buffer_iter
+        # pick n time in the buffer and release_it
+        for i in range(iter_count):
+
+            yield x_y_from_data(data_gen)
+
+
+train_data = get_batch_gen('train')
+val_data = get_batch_gen('test')
+def get_batch(split):
+    data_gen = train_data if split == 'train' else val_data
+    return next(data_gen)
 # init these up here, can override if init_from='resume' (i.e. from a checkpoint)
 iter_num = 0
 best_val_loss = 1e9
 
 # attempt to derive vocab_size from the dataset
-meta_path = os.path.join(data_dir, 'meta.pkl')
+meta_path = os.path.join(dataset, 'meta.pkl')
 if os.path.exists(meta_path):
     with open(meta_path, 'rb') as f:
         meta = pickle.load(f)
@@ -125,7 +156,7 @@ if os.path.exists(meta_path):
     print(f"vocab_size = {vocab_size} (from {meta_path})")
 else:
     print(f"vocab_size not found in {meta_path}, using GPT-2 default of 50257")
-    vocab_size = 50257
+    vocab_size = 50257 #50257
 
 # model init
 model_args = dict(n_layer = n_layer, n_head = n_head, n_embd = n_embd, block_size = block_size, dropout = dropout, vocab_size = vocab_size)
@@ -260,7 +291,8 @@ while True:
 
     # forward backward update, with optional gradient accumulation to simulate larger batch size
     for micro_step in range(gradient_accumulation_steps):
-        X, Y = get_batch('train')
+
+        X, Y = next(train_data)
         if ddp:
             # in DDP training we only need to sync gradients at the last micro step.
             # the official way to do this is with model.no_sync() context manager, but

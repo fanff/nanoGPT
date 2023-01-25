@@ -3,5 +3,4 @@ datasets
 tiktoken
 wandb
 tqdm
-
-torch
+click
