@@ -23,6 +23,7 @@ import math
 import pickle
 from contextlib import nullcontext
 
+import mlflow
 import numpy as np
 import torch
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -165,6 +166,7 @@ if init_from == 'scratch':
     print("Initializing a new model from scratch")
     gptconf = GPTConfig(**model_args)
     model = GPT(gptconf)
+    n_params = sum(p.numel() for p in model.parameters())
 elif init_from == 'resume':
     print(f"Resuming training from {out_dir}")
     # resume training from a checkpoint.
@@ -250,73 +252,82 @@ if wandb_log and master_process:
     wandb.init(project=wandb_project, name=wandb_run_name, config=config)
 
 # training loop
-t0 = time.time()
-while True:
+with mlflow.start_run():
+    mlflow.log_param("n_params",n_params)
+    t0 = time.time()
+    while True:
 
-    # determine the learning rate for this iteration
-    if decay_lr:
-        lr = get_lr(iter_num)
-        for param_group in optimizer.param_groups:
-            param_group['lr'] = lr
-    else:
-        lr = learning_rate
+        # determine the learning rate for this iteration
+        if decay_lr:
+            lr = get_lr(iter_num)
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = lr
+        else:
+            lr = learning_rate
 
-    # evaluate the loss on train/val sets and write checkpoints
-    if iter_num % eval_interval == 0 and master_process:
-        losses = estimate_loss()
-        print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
-        if wandb_log:
-            wandb.log({
-                "iter": iter_num,
-                "train/loss": losses['train'],
-                "val/loss": losses['val'],
-                "lr": lr,
-            })
-        if losses['val'] < best_val_loss or always_save_checkpoint:
-            best_val_loss = losses['val']
-            raw_model = model.module if ddp else model
-            if iter_num > 0:
-                checkpoint = {
-                    'model': raw_model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'model_args': model_args,
-                    'iter_num': iter_num,
-                    'best_val_loss': best_val_loss,
-                    'config': config,
-                }
-                print(f"saving checkpoint to {out_dir}")
-                torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
-    if iter_num == 0 and eval_only:
-        break
+        # evaluate the loss on train/val sets and write checkpoints
+        if iter_num % eval_interval == 0 and master_process:
+            losses = estimate_loss()
+            print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+            mlflow.log_metric("train_loss", losses['train'],iter_num)
+            mlflow.log_metric("val_loss", losses['val'], iter_num)
 
-    # forward backward update, with optional gradient accumulation to simulate larger batch size
-    for micro_step in range(gradient_accumulation_steps):
+            if wandb_log:
+                wandb.log({
+                    "iter": iter_num,
+                    "train/loss": losses['train'],
+                    "val/loss": losses['val'],
+                    "lr": lr,
+                })
+            if losses['val'] < best_val_loss or always_save_checkpoint:
+                best_val_loss = losses['val']
+                raw_model = model.module if ddp else model
+                if iter_num > 0:
+                    checkpoint = {
+                        'model': raw_model.state_dict(),
+                        'optimizer': optimizer.state_dict(),
+                        'model_args': model_args,
+                        'iter_num': iter_num,
+                        'best_val_loss': best_val_loss,
+                        'config': config,
+                    }
 
-        X, Y = next(train_data)
-        if ddp:
-            # in DDP training we only need to sync gradients at the last micro step.
-            # the official way to do this is with model.no_sync() context manager, but
-            # I really dislike that this bloats the code and forces us to repeat code
-            # looking at the source of that context manager, it just toggles this variable
-            model.require_backward_grad_sync = (micro_step == gradient_accumulation_steps - 1)
-        with ctx:
-            logits, loss = model(X, Y)
-        loss.backward()
-    optimizer.step()
-    optimizer.zero_grad(set_to_none=True)
+                    fname = 'ckpt.pt'
+                    print(f"saving checkpoint to {out_dir}/{fname}")
+                    torch.save(checkpoint, os.path.join(out_dir, fname))
+        if iter_num == 0 and eval_only:
+            break
 
-    # timing and logging
-    t1 = time.time()
-    dt = t1 - t0
-    t0 = t1
-    if iter_num % log_interval == 0 and master_process:
-        lossf = loss.item() # loss as float. TODO note CPU-GPU sync! profile, make sure not too slow
-        print(f"iter {iter_num}: loss {lossf:.4f}, time {dt*1000:.2f}ms")
-    iter_num += 1
+        # forward backward update, with optional gradient accumulation to simulate larger batch size
+        for micro_step in range(gradient_accumulation_steps):
 
-    # termination conditions
-    if iter_num > max_iters:
-        break
+            X, Y = next(train_data)
+            if ddp:
+                # in DDP training we only need to sync gradients at the last micro step.
+                # the official way to do this is with model.no_sync() context manager, but
+                # I really dislike that this bloats the code and forces us to repeat code
+                # looking at the source of that context manager, it just toggles this variable
+                model.require_backward_grad_sync = (micro_step == gradient_accumulation_steps - 1)
+            with ctx:
+                logits, loss = model(X, Y)
+            loss.backward()
+        optimizer.step()
+        optimizer.zero_grad(set_to_none=True)
 
-if ddp:
-    destroy_process_group()
+        # timing and logging
+        t1 = time.time()
+        dt = t1 - t0
+        t0 = t1
+        if iter_num % log_interval == 0 and master_process:
+            lossf = loss.item() # loss as float. TODO note CPU-GPU sync! profile, make sure not too slow
+            print(f"iter {iter_num}: loss {lossf:.4f}, time {dt*1000:.2f}ms")
+
+            mlflow.log_metric("train_loss", lossf, iter_num)
+        iter_num += 1
+
+        # termination conditions
+        if iter_num > max_iters:
+            break
+
+    if ddp:
+        destroy_process_group()

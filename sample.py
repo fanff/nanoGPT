@@ -9,7 +9,7 @@ import tiktoken
 from model import GPTConfig, GPT
 
 # -----------------------------------------------------------------------------
-out_dir = 'out'
+model_file = 'ckpt.pt'
 start = "\n" # or "<|endoftext|>" or whatever you like
 num_samples = 1 # number of samples to draw
 max_new_tokens = 40 # number of tokens generated in each sample
@@ -31,8 +31,7 @@ ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torc
 ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
 
 # model
-ckpt_path = os.path.join(out_dir, 'ckpt.pt')
-checkpoint = torch.load(ckpt_path, map_location=device)
+checkpoint = torch.load(model_file, map_location=device)
 gptconf = GPTConfig(**checkpoint['model_args'])
 model = GPT(gptconf)
 state_dict = checkpoint['model']

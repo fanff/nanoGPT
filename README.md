@@ -178,3 +178,8 @@ For more questions/discussions also feel free to stop by #nanoGPT on Discord:
 ## acknowledgements
 
 All nanoGPT experiments are powered by GPUs on [Lambda labs](https://lambdalabs.com), the best Cloud GPU provider thank you :)
+
+
+ docker run -it --rm -v $PWD:/h -v /home/ec2-user/mount/:/mount python:3.10 /bin/bash
+ 
+
