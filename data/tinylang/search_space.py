@@ -2,7 +2,7 @@ import os
 
 strt_str = "python train.py --dataset=data/tinylang/ "
 
-adds = ["--device=cpu --compile=False",
+adds = ["--device=cuda --compile=True",
         "--eval_interval=500 --log_interval=5 --lr_decay_iters=10000 --max_iters=12000",
         "--block_size=128 --batch_size=16"]
 

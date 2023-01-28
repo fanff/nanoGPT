@@ -256,7 +256,7 @@ with mlflow.start_run():
     mlflow.log_param("n_params",n_params)
     for k,v in config.items():
         mlflow.log_param(str(k), str(v))
-    quit()
+
     t0 = time.time()
     while True:
 
