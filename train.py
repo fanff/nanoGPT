@@ -108,7 +108,7 @@ ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=
 
 
 # list all files
-all_files = [os.path.join(dataset,_) for _ in os.listdir(dataset)]
+all_files = [os.path.join(dataset,_) for _ in os.listdir(dataset) if _.endswith(".bin")]
 
 def open_data_file(dataset):
 
@@ -254,6 +254,9 @@ if wandb_log and master_process:
 # training loop
 with mlflow.start_run():
     mlflow.log_param("n_params",n_params)
+    for k,v in config.items():
+        mlflow.log_param(str(k), str(v))
+    quit()
     t0 = time.time()
     while True:
 
@@ -271,6 +274,8 @@ with mlflow.start_run():
             print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
             mlflow.log_metric("train_loss", losses['train'],iter_num)
             mlflow.log_metric("val_loss", losses['val'], iter_num)
+            mlflow.log_metric("lr", lr, iter_num)
+
 
             if wandb_log:
                 wandb.log({
@@ -323,6 +328,8 @@ with mlflow.start_run():
             print(f"iter {iter_num}: loss {lossf:.4f}, time {dt*1000:.2f}ms")
 
             mlflow.log_metric("train_loss", lossf, iter_num)
+            mlflow.log_metric("lr", lr, iter_num)
+
         iter_num += 1
 
         # termination conditions

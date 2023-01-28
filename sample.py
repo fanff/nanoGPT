@@ -10,7 +10,8 @@ from model import GPTConfig, GPT
 
 # -----------------------------------------------------------------------------
 model_file = 'ckpt.pt'
-start = "\n" # or "<|endoftext|>" or whatever you like
+meta_path = "meta.pkl"
+start = " " # or "<|endoftext|>" or whatever you like
 num_samples = 1 # number of samples to draw
 max_new_tokens = 40 # number of tokens generated in each sample
 temperature = 0.8 # 1.0 = no change, < 1.0 = less random, > 1.0 = more random, in predictions
@@ -47,9 +48,7 @@ if compile:
 
 # look for the meta pickle in case it is available in the dataset folder
 load_meta = False
-if 'config' in checkpoint and 'dataset' in checkpoint['config']: # older checkpoints might not have these...
-    meta_path = os.path.join('data', checkpoint['config']['dataset'], 'meta.pkl')
-    load_meta = os.path.exists(meta_path)
+load_meta = os.path.exists(meta_path)
 if load_meta:
     print(f"Loading meta from {meta_path}...")
     with open(meta_path, 'rb') as f:
